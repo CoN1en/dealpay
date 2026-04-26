@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLen商店</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body {
+      font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      font-weight: 400;
+      min-height: 100vh;
+      background-color: #f3f4f6;
+    }
+    #app {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <nav class="bg-white shadow-md rounded-lg p-4 mb-6">
+      <div class="flex justify-between items-center">
+        <h1 class="text-xl font-bold text-blue-600">神秘商店</h1>
+        <div v-if="user">
+          <span class="mr-4">欢迎, {{ user.username }}</span>
+          <button @click="logout" class="px-3 py-1 bg-red-500 text-white rounded-md text-sm">登出</button>
+        </div>
+      </div>
+    </nav>
+
+    <div v-if="!user" class="bg-white shadow-md rounded-lg p-6 mb-6">
+      <h2 class="text-2xl font-bold mb-6">{{ isLogin ? '登录' : '注册' }}</h2>
+      <form @submit.prevent="handleAuth" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">用户名</label>
+          <input v-model="form.username" type="text" class="w-full px-3 py-2 border rounded-md" required>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">密码</label>
+          <input v-model="form.password" type="password" class="w-full px-3 py-2 border rounded-md" required>
+        </div>
+        <div v-if="error" class="text-red-500 text-sm">{{ error }}</div>
+        <button type="submit" class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600">
+          {{ isLogin ? '登录' : '注册' }}
+        </button>
+        <p class="text-center text-sm">
+          <button @click="isLogin = !isLogin" type="button" class="text-blue-500 hover:underline">
+            {{ isLogin ? '没有账号？注册' : '已有账号？登录' }}
+          </button>
+        </p>
+        <p class="text-center text-xs text-yellow-600 font-bold mt-4">窝偷懒绕过了安全检测,所以能在后台看到密码ww，如有介意请勿使用，密码不许设置常用密码</p>
+      </form>
+    </div>
+
+    <div v-else class="space-y-6">
+      <div class="bg-white shadow-md rounded-lg p-6">
+        <h3 class="text-xl font-semibold mb-4">每日签到</h3>
+        <div class="space-y-4">
+          <div class="flex justify-between items-center">
+            <span>当前金币:</span>
+            <span class="text-lg font-bold text-blue-600">{{ userCoins }}</span>
+          </div>
+          <button
+            @click="checkin"
+            :disabled="hasCheckedInToday || loading"
+            class="w-full bg-green-500 text-white py-2 px-4 rounded-md hover:bg-green-600 disabled:bg-gray-300"
+          >
+            {{ loading ? '处理中...' : (hasCheckedInToday ? '今日已签到' : '立即签到') }}
+          </button>
+          <div v-if="checkinResult" class="p-3 bg-green-100 text-green-700 rounded-md">
+            {{ checkinResult }}
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white shadow-md rounded-lg p-6">
+        <h3 class="text-xl font-semibold mb-4">商品商店</h3>
+        <div v-if="products.length === 0" class="text-center py-8 text-gray-500">
+          暂无商品
+        </div>
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div v-for="product in products" :key="product.id" class="border rounded-lg p-4 hover:shadow-md">
+            <h4 class="text-lg font-medium mb-2">{{ product.name }}</h4>
+            <p class="text-sm text-gray-600 mb-3">{{ product.description }}</p>
+            <div class="flex justify-between items-center">
+              <span class="text-xl font-bold text-blue-600">{{ product.price }} 金币</span>
+              <button
+                @click="purchase(product)"
+                :disabled="userCoins < product.price || purchasing"
+                class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 disabled:bg-gray-300"
+              >
+                {{ purchasing ? '购买中...' : '购买' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-if="purchaseResult" class="mt-4 p-3 bg-green-100 text-green-700 rounded-md">
+          {{ purchaseResult }}
+        </div>
+      </div>
+
+      <div class="bg-white shadow-md rounded-lg p-6">
+        <h3 class="text-xl font-semibold mb-4">我的背包</h3>
+        <div v-if="useMessage" class="mt-4 p-3 bg-green-100 text-green-700 rounded-md">
+          {{ useMessage }}
+        </div>
+        <div v-if="inventory.length === 0" class="text-center py-8 text-gray-500">
+          背包空空如也，快去商店购买商品吧！
+        </div>
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div v-for="item in inventory" :key="item.id" class="border rounded-lg p-4 hover:shadow-md">
+            <div class="flex justify-between items-start">
+              <div>
+                <h4 class="text-lg font-medium mb-1">{{ item.product_name }}</h4>
+                <p class="text-sm text-gray-600 mb-1">数量: {{ item.quantity }}</p>
+                <p class="text-xs text-gray-500">购买时间: {{ new Date(item.purchased_at).toLocaleString() }}</p>
+              </div>
+              <button
+                @click="useItem(item)"
+                class="px-3 py-1 bg-green-500 text-white rounded-md text-sm hover:bg-green-600"
+              >
+                使用
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white shadow-md rounded-lg p-6">
+        <h3 class="text-xl font-semibold mb-4">交易记录</h3>
+        <div v-if="transactions.length === 0" class="text-center py-8 text-gray-500">
+          暂无交易记录
+        </div>
+        <div v-else class="space-y-2 max-h-60 overflow-y-auto">
+          <div v-for="transaction in transactions" :key="transaction.id" class="flex justify-between items-center p-2 border-b">
+            <div>
+              <div class="text-sm font-medium">{{ transaction.description }}</div>
+              <div class="text-xs text-gray-500">{{ new Date(transaction.created_at).toLocaleString() }}</div>
+            </div>
+            <div :class="transaction.type === 'earn' ? 'text-green-500' : 'text-red-500'">
+              {{ transaction.type === 'earn' ? '+' : '-' }}{{ transaction.amount }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // Supabase 配置 - 请替换为您的真实配置
+      const supabaseUrl = 'https://ehqgudotwpherklioqaj.supabase.co';
+      const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVocWd1ZG90d3BoZXJrbGlvcWFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwOTQ4NTMsImV4cCI6MjA5MjY3MDg1M30.otTCV9OeeE7gigUw2pEEMCcutyQFzY1lfgeDTtuZM0o';
+      const client = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+      const { createApp } = Vue;
+
+      createApp({
+        data() {
+          return {
+            user: null,
+            userCoins: 0,
+            isLogin: true,
+            form: { username: '', password: '' },
+            error: '',
+            loading: false,
+            hasCheckedInToday: false,
+            checkinResult: '',
+            products: [],
+            transactions: [],
+            inventory: [],
+            purchasing: false,
+            purchaseResult: '',
+            useMessage: ''
+          };
+        },
+        mounted() {
+          this.checkUser();
+          this.fetchProducts();
+        },
+        methods: {
+          async checkUser() {
+            // 简化逻辑，检查本地用户状态
+            if (this.user) {
+              this.fetchUserInfo();
+              this.fetchTransactions();
+              this.checkCheckinStatus();
+            }
+          },
+          async fetchUserInfo() {
+            try {
+              const { data } = await client.from('users').select('coins').eq('id', this.user.id).single();
+              if (data) {
+                this.userCoins = data.coins || 0;
+              }
+            } catch (err) {
+              console.error('Fetch user info error:', err);
+            }
+          },
+          async handleAuth() {
+            this.error = '';
+            this.loading = true;
+            try {
+              if (this.isLogin) {
+                // 登录逻辑：查询用户
+                const { data, error } = await client.from('users')
+                  .select('*').eq('username', this.form.username).single();
+                if (error) throw new Error('用户不存在');
+                
+                // 验证密码
+                if (data.password !== this.form.password) {
+                  throw new Error('密码错误');
+                }
+                
+                this.user = data;
+                this.userCoins = data.coins || 0;
+              } else {
+                // 注册逻辑：创建用户
+                const { data, error } = await client.from('users')
+                  .insert({
+                    username: this.form.username,
+                    password: this.form.password,
+                    coins: 0
+                  })
+                  .select().single();
+                if (error) throw error;
+                
+                this.user = data;
+                this.userCoins = data.coins || 0;
+              }
+              this.fetchTransactions();
+              this.fetchInventory();
+              this.checkCheckinStatus();
+            } catch (err) {
+              this.error = err.message;
+              console.error('Auth error:', err);
+            } finally {
+              this.loading = false;
+            }
+          },
+          async logout() {
+            this.user = null;
+            this.userCoins = 0;
+            this.hasCheckedInToday = false;
+            this.transactions = [];
+            this.inventory = [];
+          },
+          async checkCheckinStatus() {
+            try {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const todayStr = today.toISOString().split('T')[0];
+
+              const { data } = await client.from('transactions')
+                .select('*')
+                .eq('user_id', this.user.id)
+                .eq('type', 'earn')
+                .eq('description', '每日签到奖励')
+                .gte('created_at', todayStr)
+                .lt('created_at', new Date(today.getTime() + 86400000).toISOString().split('T')[0])
+                .limit(1);
+
+              this.hasCheckedInToday = data && data.length > 0;
+            } catch (err) {
+              console.error('Check checkin status error:', err);
+              this.hasCheckedInToday = false;
+            }
+          },
+          async checkin() {
+            if (this.hasCheckedInToday) return;
+            this.loading = true;
+            this.checkinResult = '';
+            try {
+              // 更新用户金币
+              const { data: userData, error: userError } = await client.from('users')
+                .update({ coins: this.userCoins + 10 })
+                .eq('id', this.user.id)
+                .select().single();
+              if (userError) throw userError;
+
+              // 创建交易记录
+              await client.from('transactions').insert({
+                user_id: this.user.id,
+                type: 'earn',
+                amount: 10,
+                description: '每日签到奖励'
+              });
+
+              this.userCoins = userData.coins;
+              this.hasCheckedInToday = true;
+              this.checkinResult = '签到成功！获得 10 金币，当前余额：' + userData.coins;
+              this.fetchTransactions();
+            } catch (err) {
+              this.checkinResult = '签到失败：' + err.message;
+              console.error('Checkin error:', err);
+            } finally {
+              this.loading = false;
+            }
+          },
+          async fetchProducts() {
+            try {
+              const { data } = await client.from('products').select('*');
+              this.products = data || [];
+            } catch (err) {
+              console.error('Fetch products error:', err);
+            }
+          },
+          async fetchTransactions() {
+            try {
+              const { data } = await client.from('transactions').select('*')
+                .eq('user_id', this.user.id).order('created_at', { ascending: false }).limit(20);
+              this.transactions = data || [];
+            } catch (err) {
+              console.error('Fetch transactions error:', err);
+            }
+          },
+          async purchase(product) {
+            if (this.userCoins < product.price) {
+              this.purchaseResult = '金币不足';
+              return;
+            }
+            this.purchasing = true;
+            this.purchaseResult = '';
+            try {
+              // 更新用户金币
+              const { data: userData, error: userError } = await client.from('users')
+                .update({ coins: this.userCoins - product.price })
+                .eq('id', this.user.id)
+                .select().single();
+              if (userError) throw userError;
+
+              // 创建交易记录
+              await client.from('transactions').insert({
+                user_id: this.user.id,
+                type: 'spend',
+                amount: product.price,
+                description: '购买商品：' + product.name
+              });
+
+              // 添加到背包
+              await this.addToInventory(product);
+
+              this.userCoins = userData.coins;
+              this.purchaseResult = '购买成功！剩余金币：' + userData.coins;
+              this.fetchTransactions();
+            } catch (err) {
+              this.purchaseResult = '购买失败：' + err.message;
+              console.error('Purchase error:', err);
+            } finally {
+              this.purchasing = false;
+            }
+          },
+          async addToInventory(product) {
+            try {
+              const { data: existing } = await client.from('user_inventory')
+                .select('*')
+                .eq('user_id', this.user.id)
+                .eq('product_id', product.id)
+                .single();
+              
+              if (existing) {
+                await client.from('user_inventory')
+                  .update({ quantity: existing.quantity + 1 })
+                  .eq('id', existing.id);
+              } else {
+                await client.from('user_inventory')
+                  .insert({
+                    user_id: this.user.id,
+                    product_id: product.id,
+                    product_name: product.name,
+                    quantity: 1
+                  });
+              }
+              this.fetchInventory();
+            } catch (err) {
+              console.error('Add to inventory error:', err);
+            }
+          },
+          async fetchInventory() {
+            try {
+              const { data } = await client.from('user_inventory')
+                .select('*')
+                .eq('user_id', this.user.id)
+                .order('purchased_at', { ascending: false });
+              this.inventory = data || [];
+            } catch (err) {
+              console.error('Fetch inventory error:', err);
+            }
+          },
+          async useItem(item) {
+            try {
+              if (item.quantity === 1) {
+                await client.from('user_inventory')
+                  .delete()
+                  .eq('id', item.id);
+              } else {
+                await client.from('user_inventory')
+                  .update({ quantity: item.quantity - 1 })
+                  .eq('id', item.id);
+              }
+              this.useMessage = '您已成功使用 ' + item.product_name;
+              setTimeout(() => {
+                this.useMessage = '';
+              }, 3000);
+              this.fetchInventory();
+            } catch (err) {
+              console.error('Use item error:', err);
+            }
+          }
+        }
+      }).mount('#app');
+    })();
+  </script>
+</body>
+</html>
